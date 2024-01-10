@@ -14,7 +14,7 @@ mydb = mysql.connector.connect(
 )
 
 mycursor = mydb.cursor()
-mycursor.execute("DROP TABLE userss")
+#mycursor.execute("DROP TABLE userss")
 mycursor.execute("CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, id INT)")
 mycursor.execute("SHOW TABLES")
 
