@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands, tasks
 import mysql.connector
 
-TOKEN = "MTE5MjkwMjg2NDc4ODUyNTIxNw.GA7oN3.iuGKaywpUbOcvjR7MEplQPKMOqbhD3CVxMBKlc"
+TOKEN = "My Token"
 CHANNEL_ID = 1194481436032516096
 
 mydb = mysql.connector.connect(
