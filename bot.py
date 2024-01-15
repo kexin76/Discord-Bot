@@ -1,14 +1,16 @@
 
 import discord
 from discord.ext import commands, tasks
-from discord.ui import Button
+from discord.ui import Button, View
+from discord import ui
 import mysql.connector
 import zoneinfo
+import random
+import time
 
-TOKEN = "My TOKEN"
+TOKEN = "My Token"
 CHANNEL_ID = 1195225140351467591
 
-# my local database
 mydb = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -17,8 +19,7 @@ mydb = mysql.connector.connect(
 )
 
 mycursor = mydb.cursor(buffered=True)
-# for testing
-#mycursor.execute("DROP TABLE userss") 
+mycursor.execute("DROP TABLE userss") # for testing
 mycursor.execute("CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, joined_server DATE, coins INT DEFAULT(100))")
 mycursor.execute("SHOW TABLES")
 
@@ -49,8 +50,6 @@ def insertToDb(member):
     
 @bot.event
 async def on_ready():
-    # channel = bot.get_channel(CHANNEL_ID)
-    # await channel.send("READY")
     for mem in bot.get_all_members():
         insertToDb(mem)
 
@@ -68,12 +67,6 @@ async def on_member_join(member):
     channel = bot.get_channel(CHANNEL_ID)
     await channel.send(f"Welcome, {member}")
     insertToDb(member)
-    
-# NOT NEEDED ANYMORE ?
-# @bot.command()
-# async def addtoDb(ctx):
-#     name = ctx.author
-#     insertToDb(name)
 
 @bot.command()
 async def hello(ctx):
@@ -93,15 +86,67 @@ async def when_joined(ctx):
     inside = mycursor.fetchone()
     await ctx.send(f"{ctx.author.name} joined at",inside[0])
 
+@bot.command()
+async def db(ctx):
+    mycursor.execute("SELECT * FROM userss")
+    results = mycursor.fetchall()
+    for row in results:
+        await ctx.send(row)
+
+
+class rpsHelper(View):
+    def __init__(self,ctx):
+        super().__init__()
+        self.ctx = ctx
+        self.num = random.randrange(1,4)
+    
+    @discord.ui.button( style=discord.ButtonStyle.blurple, emoji="🧱", custom_id="rock")
+    async def rps_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.results(interaction,button, 1)
+    @discord.ui.button(style=discord.ButtonStyle.gray, emoji="📄",custom_id="paper")
+    async def pap(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.results(interaction,button, 2)
+    @discord.ui.button(style=discord.ButtonStyle.green, emoji="✂️", custom_id="scissor")
+    async def sci(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.results(interaction,button, 3)
+        
+    
+    async def results(self, interaction: discord.Interaction, button: discord.ui.Button, choice):
+        emoji = {1:"🧱", 2:"📄", 3:"✂️"}
+        win = True
+        for box in self.children:
+            box.disabled = True
+        await interaction.response.edit_message(view=self, content=f"{self.ctx.author.name} has chosen **{emoji[choice]}**!")
+        time.sleep(3)
+        mes = await self.ctx.reply(f"They chose **{emoji[self.num]}**!")
+        time.sleep(2)
+        if choice == self.num:
+            await mes.edit(content="**TIE!**, You lose nothing 😅")
+        elif choice == 1 and self.num == 3:
+            await mes.edit(content="🧱 beats ✂️, You winnnn!!!!")
+        elif choice == 2 and self.num == 1:
+            await mes.edit(content="📄 beats 🧱, You winnnn!!!!")
+        elif choice == 3 and self.num == 2:
+            await mes.edit(content="✂️ beats 📄, You winnnn!!!!")
+        else:
+            win = False 
+            await mes.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
+        
+        
+        
+        
+        
+        
+        
+        
 
 @bot.command()
 async def rps(ctx):
     username = ctx.author.name
-    but = Button( style=discord.ButtonStyle.grey, label="idk", emoji="🤑")
-    butt = discord.ui.View()
-    butt.add_item(but)
+    view = rpsHelper(ctx)
     
-    await ctx.send(view = butt)
+    await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = view)
+
 
 bot.run(TOKEN)
 
