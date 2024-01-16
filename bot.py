@@ -1,12 +1,14 @@
 
+from typing import Optional
 import discord
 from discord.ext import commands, tasks
 from discord.ui import Button, View
-from discord import ui
+from discord import ui, app_commands
 import mysql.connector
 import zoneinfo
 import random
 import time
+import asyncio
 
 TOKEN = "My Token"
 CHANNEL_ID = 1195225140351467591
@@ -68,18 +70,7 @@ async def on_member_join(member):
     await channel.send(f"Welcome, {member}")
     insertToDb(member)
 
-@bot.command()
-async def hello(ctx):
-    await ctx.send("hello!")
 
-@bot.command()
-async def add(ctx, *args):
-    sum = 0
-    for nums in args:
-        sum+=int(nums)
-    await ctx.send(sum)
-    
-    
 @bot.command()
 async def when_joined(ctx):
     mycursor.execute("SELECT joined_server FROM userss WHERE username = %s", (ctx.author.name,))
@@ -94,11 +85,25 @@ async def db(ctx):
         await ctx.send(row)
 
 
+
+def updateCoins(won, bet):
+    
+class betAmount(ui.Modal, title="Bet Request"):
+    
+    ask = ui.TextInput(label="Enter bet")
+    bet = ui.TextInput(label="Enter your bet 💰",style=discord.TextStyle.short)
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.send_message("TAKEN")
+        
+    
+        
+
 class rpsHelper(View):
-    def __init__(self,ctx):
+    def __init__(self,ctx, bet):
         super().__init__()
         self.ctx = ctx
         self.num = random.randrange(1,4)
+        self.bet = bet
     
     @discord.ui.button( style=discord.ButtonStyle.blurple, emoji="🧱", custom_id="rock")
     async def rps_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -132,20 +137,31 @@ class rpsHelper(View):
             win = False 
             await mes.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
         
-        
-        
-        
-        
-        
-        
-        
+        await updateCoins(win, self.bet)
 
+
+    
 @bot.command()
 async def rps(ctx):
-    username = ctx.author.name
-    view = rpsHelper(ctx)
+    def check(m):
+        if m.author == ctx.author and m.channel == ctx.channel:
+            try:
+                float(m.content)
+                return True
+            except ValueError:
+                return False
+        return False
+    await ctx.send("Enter your bet: ")
     
-    await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = view)
+    try:
+        bet = await bot.wait_for("message", check=check, timeout=15)
+    except asyncio.TimeoutError:
+        await ctx.send("Too Slow!!!")
+        return
+        
+    print(bet.content)
+    hlper = rpsHelper(ctx, bet)
+    await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = hlper)
 
 
 bot.run(TOKEN)
