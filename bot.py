@@ -70,7 +70,6 @@ async def on_member_join(member):
     await channel.send(f"Welcome, {member}")
     insertToDb(member)
 
-
 @bot.command()
 async def when_joined(ctx):
     mycursor.execute("SELECT joined_server FROM userss WHERE username = %s", (ctx.author.name,))
@@ -84,19 +83,34 @@ async def db(ctx):
     for row in results:
         await ctx.send(row)
 
-
-
-def updateCoins(won, bet):
+def getCoins(ctx):
+    name = ctx.author.name
+    mycursor.execute("SELECT coins FROM userss WHERE username = %s",(name,))
+    return mycursor.fetchone()[0]
     
+def validBet(ctx, bet):
+    coins = getCoins(ctx)
+    if coins == 0 or coins < bet:
+        return False
+    return True
+
+def updateCoins(ctx, won, bet):
+    coins = getCoins(ctx)
+    if won:
+        coins+=(bet*2)
+    else:
+        coins-=bet
+        
+    print(coins , ctx.author.name)
+    mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,ctx.author.name))
+    mydb.commit()
+     
 class betAmount(ui.Modal, title="Bet Request"):
     
     ask = ui.TextInput(label="Enter bet")
     bet = ui.TextInput(label="Enter your bet 💰",style=discord.TextStyle.short)
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message("TAKEN")
-        
-    
-        
+        await interaction.response.send_message("TAKEN")     
 
 class rpsHelper(View):
     def __init__(self,ctx, bet):
@@ -127,6 +141,7 @@ class rpsHelper(View):
         time.sleep(2)
         if choice == self.num:
             await mes.edit(content="**TIE!**, You lose nothing 😅")
+            return
         elif choice == 1 and self.num == 3:
             await mes.edit(content="🧱 beats ✂️, You winnnn!!!!")
         elif choice == 2 and self.num == 1:
@@ -137,10 +152,8 @@ class rpsHelper(View):
             win = False 
             await mes.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
         
-        await updateCoins(win, self.bet)
+        updateCoins(self.ctx, win, self.bet)
 
-
-    
 @bot.command()
 async def rps(ctx):
     def check(m):
@@ -158,11 +171,16 @@ async def rps(ctx):
     except asyncio.TimeoutError:
         await ctx.send("Too Slow!!!")
         return
+    bet = int(bet.content)
+    if validBet(ctx, bet) is False:
+        await ctx.send("Invalid bet.")
+        return
         
-    print(bet.content)
     hlper = rpsHelper(ctx, bet)
     await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = hlper)
 
 
 bot.run(TOKEN)
+
+
 
