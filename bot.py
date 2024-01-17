@@ -1,5 +1,4 @@
 
-from typing import Optional
 import discord
 from discord.ext import commands, tasks
 from discord.ui import Button, View
@@ -22,22 +21,15 @@ mydb = mysql.connector.connect(
 
 mycursor = mydb.cursor(buffered=True)
 mycursor.execute("DROP TABLE userss") # for testing
-mycursor.execute("CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, joined_server DATE, coins INT DEFAULT(100))")
+mycursor.execute(
+    "CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, joined_server DATE, coins INT DEFAULT(100), level INT DEFAULT(0), exp INT DEFAULT(0))"
+)
 mycursor.execute("SHOW TABLES")
 
 
 
 bot = commands.Bot(command_prefix='!',intents=discord.Intents.all())
 discord.member = True
-
-# NOT NEEDED, THIS IS FOR TESTING
-def printDb():
-    print(mycursor.rowcount)
-    mycursor.execute("SELECT * FROM userss")
-    results = mycursor.fetchall()
-    for row in results:
-        print(row)
-
 
 def insertToDb(member):
     mycursor.execute("SELECT COUNT(username) FROM userss WHERE username = %s", (member.name,))
@@ -49,24 +41,81 @@ def insertToDb(member):
     mycursor.execute("INSERT INTO userss (username, joined_server) VALUES (%s, %s)",(member.name,est_time))
     mydb.commit()
 
-# def updateExp(mem):
-    
+def updateExp(name):
+    mycursor.execute("SELECT COUNT(username) FROM userss WHERE username = %s", (name,))
+    if mycursor.fetchone()[0] == 0:
+        print(mycursor.fetchone()[0])
+        return
+    mycursor.execute("SELECT level, exp FROM userss WHERE username = %s", (name,))
+    row = mycursor.fetchone()
+    level = row[0]
+    exp = row[1]
+    exp+=1
+    if exp == 100:
+        level+=1
+        exp=0
+    mycursor.execute("UPDATE userss SET level = %s, exp = %s WHERE username = %s",(level,exp,name))
+    mydb.commit()
 
+def getCoins(ctx):
+    name = ctx.author.name
+    mycursor.execute("SELECT coins FROM userss WHERE username = %s",(name,))
+    return mycursor.fetchone()[0]
+
+async def validBet(ctx, bet):
+    coins = getCoins(ctx)
+    if coins == 0 or coins < bet:
+        await ctx.send("Invalid bet.")
+        return False
+    return True
+    
+def updateCoins(ctx, won, bet):
+    coins = getCoins(ctx)
+    if won:
+        coins+=(bet*2)
+    else:
+        coins-=bet
+        
+    print(coins , ctx.author.name)
+    mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,ctx.author.name))
+    mydb.commit()   
+    
+    
+async def getMessage(ctx, line, limit):
+    def check(m):
+        if m.author == ctx.author and m.channel == ctx.channel:
+            try:
+                int(m.content)
+                return True
+            except ValueError:
+                return False
+        return False
+    await ctx.send(line)
+    
+    try:
+        return await bot.wait_for("message", check=check, timeout=limit)
+    except asyncio.TimeoutError:
+        await ctx.send("Too Slow!!!")
+        return 
+   
 @bot.event
 async def on_ready():
     for mem in bot.get_all_members():
         insertToDb(mem)
-    # for channel in bot.get_all_channels():
-    #     async for mess in channel.history(limit=None):
-            
+    for channel in bot.get_all_channels():
+        if isinstance(channel, discord.TextChannel):
+            # print(channel)
+            async for mess in channel.history(limit=None):
+                # print(mess.author.name+"--"+mess.content)
+                updateExp(mess.author.name)
+    print("DONE")
 
 @bot.event
 async def on_message(message):
     await bot.process_commands(message)
     if message.author == bot.user:
         return
-    if message.content.startswith("hello"):
-        await message.channel.send(f"HAIIIIIIIIII, {message.author}")
+    updateExp(message.author.name)
 
 @bot.event
 async def on_member_join(member):
@@ -74,6 +123,30 @@ async def on_member_join(member):
     channel = bot.get_channel(CHANNEL_ID)
     await channel.send(f"Welcome, {member}")
     insertToDb(member)
+
+@bot.command()
+async def user(ctx,name):
+    mycursor.execute("SELECT level,exp, coins FROM userss WHERE username = %s",(name,))
+    row = mycursor.fetchone()
+    await ctx.send(f"{name} is level {row[0]}, with {row[1]}/100 exp and {row[2]} coins")
+
+@bot.command()
+async def coinsleaderboard(ctx):
+    mycursor.execute("SELECT username, coins FROM userss ORDER BY coins DESC")
+    all = mycursor.fetchall()
+    line = ""
+    for row in all:
+        line+= f"{row[0]}: {row[1]} coins\n"
+    await ctx.send(line)
+
+@bot.command()
+async def expleaderboard(ctx):
+    mycursor.execute("SELECT username, level, exp FROM userss ORDER BY level DESC, exp DESC")
+    all = mycursor.fetchall()
+    line = ""
+    for row in all:
+        line+=f"{row[0]}, level: {row[1]}, exp: {row[2]}\n"
+    await ctx.send(line)
 
 @bot.command()
 async def when_joined(ctx):
@@ -87,31 +160,6 @@ async def db(ctx):
     results = mycursor.fetchall()
     for row in results:
         await ctx.send(row)
-
-def getCoins(ctx):
-    name = ctx.author.name
-    mycursor.execute("SELECT coins FROM userss WHERE username = %s",(name,))
-    return mycursor.fetchone()[0]
-    
-async def validBet(ctx, bet):
-    coins = getCoins(ctx)
-    if coins == 0 or coins < bet:
-        await ctx.send("Invalid bet.")
-        return False
-    return True
-
-
-def updateCoins(ctx, won, bet):
-    coins = getCoins(ctx)
-    if won:
-        coins+=(bet*2)
-    else:
-        coins-=bet
-        
-    print(coins , ctx.author.name)
-    mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,ctx.author.name))
-    mydb.commit()    
-
 
 class rpsHelper(View):
     def __init__(self,ctx, bet):
@@ -154,23 +202,6 @@ class rpsHelper(View):
             await mes.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
         
         updateCoins(self.ctx, win, self.bet)
-
-async def getMessage(ctx, line, limit):
-    def check(m):
-        if m.author == ctx.author and m.channel == ctx.channel:
-            try:
-                int(m.content)
-                return True
-            except ValueError:
-                return False
-        return False
-    await ctx.send(line)
-    
-    try:
-        return await bot.wait_for("message", check=check, timeout=limit)
-    except asyncio.TimeoutError:
-        await ctx.send("Too Slow!!!")
-        return 
 
 @bot.command()
 async def rps(ctx):
@@ -226,6 +257,7 @@ async def guess(ctx):
         await ctx.send(f"Incorrect, the number is from {lower} to {upper}")
     await ctx.send(f"You lost, the correct answer was {answer}")
     updateCoins(ctx, False, bet)
+           
 
 bot.run(TOKEN)
 
