@@ -48,12 +48,17 @@ def insertToDb(member):
     est_time = member.joined_at.astimezone(est)
     mycursor.execute("INSERT INTO userss (username, joined_server) VALUES (%s, %s)",(member.name,est_time))
     mydb.commit()
-    printDb()
+
+# def updateExp(mem):
     
+
 @bot.event
 async def on_ready():
     for mem in bot.get_all_members():
         insertToDb(mem)
+    # for channel in bot.get_all_channels():
+    #     async for mess in channel.history(limit=None):
+            
 
 @bot.event
 async def on_message(message):
@@ -88,11 +93,13 @@ def getCoins(ctx):
     mycursor.execute("SELECT coins FROM userss WHERE username = %s",(name,))
     return mycursor.fetchone()[0]
     
-def validBet(ctx, bet):
+async def validBet(ctx, bet):
     coins = getCoins(ctx)
     if coins == 0 or coins < bet:
+        await ctx.send("Invalid bet.")
         return False
     return True
+
 
 def updateCoins(ctx, won, bet):
     coins = getCoins(ctx)
@@ -103,14 +110,8 @@ def updateCoins(ctx, won, bet):
         
     print(coins , ctx.author.name)
     mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,ctx.author.name))
-    mydb.commit()
-     
-class betAmount(ui.Modal, title="Bet Request"):
-    
-    ask = ui.TextInput(label="Enter bet")
-    bet = ui.TextInput(label="Enter your bet 💰",style=discord.TextStyle.short)
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message("TAKEN")     
+    mydb.commit()    
+
 
 class rpsHelper(View):
     def __init__(self,ctx, bet):
@@ -154,33 +155,77 @@ class rpsHelper(View):
         
         updateCoins(self.ctx, win, self.bet)
 
-@bot.command()
-async def rps(ctx):
+async def getMessage(ctx, line, limit):
     def check(m):
         if m.author == ctx.author and m.channel == ctx.channel:
             try:
-                float(m.content)
+                int(m.content)
                 return True
             except ValueError:
                 return False
         return False
-    await ctx.send("Enter your bet: ")
+    await ctx.send(line)
     
     try:
-        bet = await bot.wait_for("message", check=check, timeout=15)
+        return await bot.wait_for("message", check=check, timeout=limit)
     except asyncio.TimeoutError:
         await ctx.send("Too Slow!!!")
-        return
+        return 
+
+@bot.command()
+async def rps(ctx):
+    bet = await getMessage(ctx, "Enter your bet: ", 15)
+    if bet == None:
+        return 
     bet = int(bet.content)
-    if validBet(ctx, bet) is False:
-        await ctx.send("Invalid bet.")
+    valid = await validBet(ctx, bet)
+    if valid is False:
         return
-        
     hlper = rpsHelper(ctx, bet)
     await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = hlper)
 
+@bot.command()
+async def guess(ctx):
+    bet = await getMessage(ctx, "Enter your bet: ", 15)
+    if bet == None:
+        return
+    bet = int(bet.content)
+    valid = await validBet(ctx, bet)
+    if valid is False:
+        return 
+    answer = random.randrange(1,101)
+    print(answer)
+    lower = 1
+    upper = 100
+    lives = 5
+    async def getChoice():
+        line = f"Pick number from {lower} to {upper}"
+        choice = await getMessage(ctx, line, 20)
+        if choice == None:
+            return 
+        choice = int(choice.content)
+        if int(choice) < lower or upper < int(choice):
+            await ctx.send("Invalid choice, pick again.")
+            getChoice()
+        return choice
+    while True:
+        choice = await getChoice()
+        if choice is None:
+            return
+        if answer == choice:
+            await ctx.send(f"You found the answer, it is {answer}!!")
+            updateCoins(ctx, True, bet)
+            return
+        if answer < choice:
+            upper = choice-1
+        else:
+            lower = choice+1
+        lives-=1
+        if lives == 0:
+            break
+        await ctx.send(f"Incorrect, the number is from {lower} to {upper}")
+    await ctx.send(f"You lost, the correct answer was {answer}")
+    updateCoins(ctx, False, bet)
 
 bot.run(TOKEN)
-
-
 
