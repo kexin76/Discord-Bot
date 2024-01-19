@@ -1,16 +1,19 @@
-
+from typing import List
 import discord
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import ui, app_commands
+from discord.app_commands import Choice
 import mysql.connector
 import zoneinfo
 import random
 import time
 import asyncio
 
-TOKEN = "My Token"
-CHANNEL_ID = 1195225140351467591
+TOKEN = "My token"
+CHANNEL_ID = None # must be integer
+OWNERS_ID = {000000,0000000} # integers as well
+GUILD_ID = 000000000000 #integers
 
 mydb = mysql.connector.connect(
     host="localhost",
@@ -20,16 +23,20 @@ mydb = mysql.connector.connect(
 )
 
 mycursor = mydb.cursor(buffered=True)
-mycursor.execute("DROP TABLE userss") # for testing
-mycursor.execute(
-    "CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, joined_server DATE, coins INT DEFAULT(100), level INT DEFAULT(0), exp INT DEFAULT(0))"
-)
-mycursor.execute("SHOW TABLES")
-
+# mycursor.execute("DROP TABLE userss") # for testing
+# mycursor.execute(
+#     "CREATE TABLE userss(username VARCHAR(40) PRIMARY KEY, joined_server DATE, coins INT DEFAULT(100), level INT DEFAULT(0), exp INT DEFAULT(0))"
+# )
+# mycursor.execute("SHOW TABLES")
+search = False
 
 
 bot = commands.Bot(command_prefix='!',intents=discord.Intents.all())
 discord.member = True
+
+
+def getGuild():
+    return bot.guilds[0]
 
 def insertToDb(member):
     mycursor.execute("SELECT COUNT(username) FROM userss WHERE username = %s", (member.name,))
@@ -57,58 +64,72 @@ def updateExp(name):
     mycursor.execute("UPDATE userss SET level = %s, exp = %s WHERE username = %s",(level,exp,name))
     mydb.commit()
 
-def getCoins(ctx):
-    name = ctx.author.name
+def getCoins(interaction):
+    name = interaction.user.name
     mycursor.execute("SELECT coins FROM userss WHERE username = %s",(name,))
     return mycursor.fetchone()[0]
 
-async def validBet(ctx, bet):
-    coins = getCoins(ctx)
+async def validBet(interaction, bet):
+    coins = getCoins(interaction)
     if coins == 0 or coins < bet:
-        await ctx.send("Invalid bet.")
+        await interaction.response.send_message("Invalid bet.")
         return False
     return True
     
-def updateCoins(ctx, won, bet):
-    coins = getCoins(ctx)
+def updateCoins(interaction, won, bet):
+    coins = getCoins(interaction)
     if won:
         coins+=(bet*2)
     else:
         coins-=bet
         
-    print(coins , ctx.author.name)
-    mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,ctx.author.name))
+    print(coins , interaction.user.name)
+    mycursor.execute("UPDATE userss SET coins = %s WHERE username = %s",(coins,interaction.user.name))
     mydb.commit()   
-    
-    
-async def getMessage(ctx, line, limit):
+       
+async def getMessage(interaction, line, limit):
     def check(m):
-        if m.author == ctx.author and m.channel == ctx.channel:
+        if m.author.name == interaction.user.name and m.channel == interaction.channel:
             try:
                 int(m.content)
                 return True
             except ValueError:
                 return False
         return False
-    await ctx.send(line)
+    await interaction.channel.send(line)
     
     try:
         return await bot.wait_for("message", check=check, timeout=limit)
     except asyncio.TimeoutError:
-        await ctx.send("Too Slow!!!")
+        await interaction.channel.send("Too Slow!!!")
         return 
-   
+
 @bot.event
 async def on_ready():
     for mem in bot.get_all_members():
         insertToDb(mem)
-    for channel in bot.get_all_channels():
-        if isinstance(channel, discord.TextChannel):
-            # print(channel)
-            async for mess in channel.history(limit=None):
-                # print(mess.author.name+"--"+mess.content)
-                updateExp(mess.author.name)
+    bot.tree.clear_commands(guild=getGuild())
+    print(GUILD_ID)
+    print(bot.guilds)
+    print(bot.guilds[0])
+    # GUILD_ID = bot.guilds[0]
+    # bot.tree.copy_global_to(guild=GUILD_ID)
+    # await bot.tree.sync(guild=GUILD_ID)
+    if search:
+        for channel in bot.get_all_channels():
+            if isinstance(channel, discord.TextChannel):
+                async for mess in channel.history(limit=None):
+                        updateExp(mess.author.name)
     print("DONE")
+    
+@bot.command()
+async def sync(ctx):
+    if ctx.author.id in OWNERS:
+        synced = await bot.tree.sync()
+        print('Command tree synced.')
+        await ctx.send(f"Synced {len(synced)} commands")
+    else:
+        await ctx.send('You dont have permission for this.')
 
 @bot.event
 async def on_message(message):
@@ -124,47 +145,40 @@ async def on_member_join(member):
     await channel.send(f"Welcome, {member}")
     insertToDb(member)
 
-@bot.command()
-async def user(ctx,name):
-    mycursor.execute("SELECT level,exp, coins FROM userss WHERE username = %s",(name,))
+@bot.tree.command(name="get_user", description="User's level, exp, and coins")
+async def get_user(interaction: discord.Interaction, username: discord.Member):
+    
+    mycursor.execute("SELECT level,exp, coins FROM userss WHERE username = %s",(username.name,))
     row = mycursor.fetchone()
-    await ctx.send(f"{name} is level {row[0]}, with {row[1]}/100 exp and {row[2]} coins")
+    await interaction.response.send_message(f"{username.name} is level {row[0]}, with {row[1]}/100 exp and {row[2]} coins")
 
-@bot.command()
-async def coinsleaderboard(ctx):
+@bot.tree.command(name="coins_leaderboard", description="Most coins")
+async def coinsleaderboard(interaction: discord.Interaction):
     mycursor.execute("SELECT username, coins FROM userss ORDER BY coins DESC")
     all = mycursor.fetchall()
     line = ""
     for row in all:
         line+= f"{row[0]}: {row[1]} coins\n"
-    await ctx.send(line)
+    await interaction.response.send_message(line)
 
-@bot.command()
-async def expleaderboard(ctx):
+@bot.tree.command(name="exp_leaderboard", description="Users with the highest levels")
+async def expleaderboard(interaction: discord.Interaction):
     mycursor.execute("SELECT username, level, exp FROM userss ORDER BY level DESC, exp DESC")
     all = mycursor.fetchall()
     line = ""
     for row in all:
         line+=f"{row[0]}, level: {row[1]}, exp: {row[2]}\n"
-    await ctx.send(line)
+    await interaction.response.send_message(line)
 
-@bot.command()
-async def when_joined(ctx):
-    mycursor.execute("SELECT joined_server FROM userss WHERE username = %s", (ctx.author.name,))
+@bot.tree.command(name="joined_server", description="When did the user join this server")
+async def when_joined(interaction: discord.Interaction, username: discord.Member):
+    mycursor.execute("SELECT joined_server FROM userss WHERE username = %s", (username.name,))
     inside = mycursor.fetchone()
-    await ctx.send(f"{ctx.author.name} joined at",inside[0])
-
-@bot.command()
-async def db(ctx):
-    mycursor.execute("SELECT * FROM userss")
-    results = mycursor.fetchall()
-    for row in results:
-        await ctx.send(row)
+    await interaction.response.send_message(f"{username.name} joined at "+str(inside[0]))
 
 class rpsHelper(View):
-    def __init__(self,ctx, bet):
+    def __init__(self, bet):
         super().__init__()
-        self.ctx = ctx
         self.num = random.randrange(1,4)
         self.bet = bet
     
@@ -184,45 +198,37 @@ class rpsHelper(View):
         win = True
         for box in self.children:
             box.disabled = True
-        await interaction.response.edit_message(view=self, content=f"{self.ctx.author.name} has chosen **{emoji[choice]}**!")
+        await interaction.response.edit_message(view=self, content=f"{interaction.user.name} has chosen **{emoji[choice]}**!")
         time.sleep(3)
-        mes = await self.ctx.reply(f"They chose **{emoji[self.num]}**!")
+        mes = await interaction.message.edit(view=None, content=f"They chose **{emoji[self.num]}**!")
         time.sleep(2)
         if choice == self.num:
-            await mes.edit(content="**TIE!**, You lose nothing 😅")
+            await interaction.message.edit(content="**TIE!**, You lose nothing 😅")
             return
         elif choice == 1 and self.num == 3:
-            await mes.edit(content="🧱 beats ✂️, You winnnn!!!!")
+            await interaction.message.edit(content="🧱 beats ✂️, You winnnn!!!!")
         elif choice == 2 and self.num == 1:
-            await mes.edit(content="📄 beats 🧱, You winnnn!!!!")
+            await interaction.message.edit(content="📄 beats 🧱, You winnnn!!!!")
         elif choice == 3 and self.num == 2:
-            await mes.edit(content="✂️ beats 📄, You winnnn!!!!")
+            await interaction.message.edit(content="✂️ beats 📄, You winnnn!!!!")
         else:
             win = False 
-            await mes.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
+            await interaction.message.edit(content=f"{emoji[self.num]} beats {emoji[choice]}, You lost!")
         
-        updateCoins(self.ctx, win, self.bet)
+        updateCoins(interaction, win, self.bet)
 
-@bot.command()
-async def rps(ctx):
-    bet = await getMessage(ctx, "Enter your bet: ", 15)
-    if bet == None:
-        return 
-    bet = int(bet.content)
-    valid = await validBet(ctx, bet)
-    if valid is False:
+@bot.tree.command(name='rps', description="Rock, Paper, or Scissors")
+async def rps(interaction: discord.Interaction, bet: int):
+    if (await validBet(interaction, bet)) is False:
         return
-    hlper = rpsHelper(ctx, bet)
-    await ctx.reply("Pick a choice! Rock, Paper, or Scissors",view = hlper)
+    hlper = rpsHelper(bet)
+    await interaction.response.send_message("Pick a choice! Rock, Paper, or Scissors",view = hlper)
 
-@bot.command()
-async def guess(ctx):
-    bet = await getMessage(ctx, "Enter your bet: ", 15)
-    if bet == None:
-        return
-    bet = int(bet.content)
-    valid = await validBet(ctx, bet)
-    if valid is False:
+
+@bot.tree.command(name="guess", description="Guess the number")
+async def guess(interaction: discord.Interaction, bet: int):
+    # valid = await validBet(bet)
+    if (await validBet(interaction, bet)) is False:
         return 
     answer = random.randrange(1,101)
     print(answer)
@@ -230,22 +236,24 @@ async def guess(ctx):
     upper = 100
     lives = 5
     async def getChoice():
-        line = f"Pick number from {lower} to {upper}"
-        choice = await getMessage(ctx, line, 20)
-        if choice == None:
-            return 
-        choice = int(choice.content)
-        if int(choice) < lower or upper < int(choice):
-            await ctx.send("Invalid choice, pick again.")
-            getChoice()
+        choice = 0
+        while int(choice) < lower or upper < int(choice):
+            line = f"**{interaction.user.name}**, Pick a number **between {lower} and {upper}**. "
+            choice = await getMessage(interaction, line, 20)
+            if choice == None:
+                return 
+            choice = int(choice.content)
+            if int(choice) < lower or upper < int(choice):
+                await interaction.channel.send("Invalid choice, pick again.")
         return choice
+        
     while True:
         choice = await getChoice()
         if choice is None:
             return
         if answer == choice:
-            await ctx.send(f"You found the answer, it is {answer}!!")
-            updateCoins(ctx, True, bet)
+            await interaction.channel.send(f"You found the answer, it is {answer}!!")
+            updateCoins(interaction, True, bet)
             return
         if answer < choice:
             upper = choice-1
@@ -254,10 +262,9 @@ async def guess(ctx):
         lives-=1
         if lives == 0:
             break
-        await ctx.send(f"Incorrect, the number is from {lower} to {upper}")
-    await ctx.send(f"You lost, the correct answer was {answer}")
-    updateCoins(ctx, False, bet)
-           
+        await interaction.channel.send(f"Incorrect")
+    await interaction.channel.send(f"You lost, the correct answer was {answer}")
+    updateCoins(interaction, False, bet)
 
 bot.run(TOKEN)
 
